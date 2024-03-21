@@ -22,52 +22,74 @@ const (
 )
 
 type Modbus struct {
-	ConnType ConnType
-	ModbusTCP
-	ModbusRTU
-	SlaveID uint8
+	connType ConnType
+	modbusTCP
+	modbusRTU
+	slaveID uint8
+	timeout time.Duration
 
-	Points Point
+	points      Point
+	maxQuantity uint16
 
 	connPool ConnPool
 }
 
-type ModbusTCP struct {
-	Host string
-	Port uint16
+func NewModbusTCP(host string, port int, point Point, opts ...ModbusOption) *Modbus {
+	m := &Modbus{
+		connType: ConnTypeTCP,
+		slaveID:  1,
+		modbusTCP: modbusTCP{
+			Host:            host,
+			Port:            port,
+			MaxOpenConns:    3,
+			ConnMaxLifetime: 30 * time.Minute,
+		},
+		points:      point,
+		maxQuantity: 125,
+		timeout:     10 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
-type ModbusRTU struct {
-	ComAddr  string
-	BaudRate int
-	DataBits int
-	Parity   string
-	StopBits int
+func NewModbusRTU(comAddr string, point Point, opts ...ModbusOption) *Modbus {
+	m := &Modbus{
+		connType: ConnTypeRTU,
+		slaveID:  1,
+		modbusRTU: modbusRTU{
+			ComAddr:  comAddr,
+			BaudRate: 9600,
+			DataBits: 8,
+			Parity:   "N",
+			StopBits: 1,
+		},
+		points:      point,
+		maxQuantity: 125,
+		timeout:     10 * time.Second,
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
-
-const (
-	maxQuantity uint16 = 125
-)
 
 func (m *Modbus) Conn() error {
-	if m.ConnType == ConnTypeTCP {
-		return m.ConnTCP()
-	} else if m.ConnType == ConnTypeRTU {
-		// TODO
-		return nil
+	if m.connType == ConnTypeTCP {
+		return m.connTCP()
+	} else if m.connType == ConnTypeRTU {
+		return m.connRTU()
 	}
 	return nil
 }
 
-func (m *Modbus) ConnTCP() error {
+func (m *Modbus) connTCP() error {
 	addr := fmt.Sprintf("%s:%d", m.Host, m.Port)
-	if m.SlaveID == 0 { // default slave ID
-		m.SlaveID = 1
-	}
 	factory := func() (Client, error) {
 		handler := modbus.NewTCPClientHandler(addr)
-		handler.Timeout = 10 * time.Second
-		handler.SlaveId = m.SlaveID
+		handler.Timeout = m.timeout
+		handler.SlaveId = m.slaveID
 		if e := handler.Connect(); e != nil {
 			return nil, e
 		}
@@ -75,16 +97,38 @@ func (m *Modbus) ConnTCP() error {
 		return &ModbusTCPClient{Client: client, Handler: handler, createTime: time.Now()}, nil
 	}
 	config := ModbusTCPPoolConfig{
-		MaxOpenConns:    3,
-		ConnMaxLifetime: 30 * time.Minute,
+		MaxOpenConns:    m.MaxOpenConns,
+		ConnMaxLifetime: m.ConnMaxLifetime,
 	}
 
 	pool, err := NewModbusTCPPool(config, factory)
 	if err != nil {
-		return fmt.Errorf("failed to create pool: %w", err)
+		return fmt.Errorf("failed to create TCP pool: %w", err)
 	}
 	m.connPool = pool
 	return nil
+}
+
+func (m *Modbus) connRTU() error {
+	handler := modbus.NewRTUClientHandler(m.ComAddr)
+	handler.BaudRate = m.BaudRate
+	handler.DataBits = m.DataBits
+	handler.Parity = m.Parity
+	handler.StopBits = m.StopBits
+	handler.SlaveId = m.slaveID
+	handler.Timeout = m.timeout
+	if e := handler.Connect(); e != nil {
+		return e
+	}
+	client := modbus.NewClient(handler)
+
+	pool, err := NewModbusRTUPool(&ModbusRTUClient{Client: client, Handler: handler, createTime: time.Now()})
+	if err != nil {
+		return fmt.Errorf("failed to create RTU pool: %w", err)
+	}
+	m.connPool = pool
+	return nil
+
 }
 
 func (m *Modbus) Close() error {
@@ -93,7 +137,7 @@ func (m *Modbus) Close() error {
 
 // GetValue Get value from modbus and write to v.
 func (m *Modbus) GetValue(ctx context.Context, point string, v any) error {
-	fieldDetail, ok := m.Points[point]
+	fieldDetail, ok := m.points[point]
 	if !ok {
 		return fmt.Errorf("point for %s not found", point)
 	}
@@ -164,7 +208,7 @@ func (m *Modbus) GetValue(ctx context.Context, point string, v any) error {
 
 // GetValues Get values from modbus and write to v.
 /*
-	Fields need to be set should have tag "point"
+	Fields need to be set should have tag "morm"
 	v should be a struct pointer
 */
 func (m *Modbus) GetValues(ctx context.Context, v any, filter ...string) error {
@@ -219,7 +263,7 @@ func (m *Modbus) GetValues(ctx context.Context, v any, filter ...string) error {
 		if needFilter && !filterMap[fieldName] {
 			continue
 		}
-		fieldDetail, ok := m.Points[fieldName]
+		fieldDetail, ok := m.points[fieldName]
 		if !ok {
 			continue
 		}
@@ -287,11 +331,11 @@ func (m *Modbus) GetValues(ctx context.Context, v any, filter ...string) error {
 
 // readHoldingRegisters allow to read quantiry larger than maxQuantity
 func (m *Modbus) readHoldingRegisters(conn Client, address uint16, quantity uint16) (results []byte, err error) {
-	if quantity <= maxQuantity {
+	if quantity <= m.maxQuantity {
 		return conn.ReadHoldingRegisters(address, quantity)
 	}
 	for quantity > 0 {
-		currentQuantity := min[uint16](quantity, maxQuantity)
+		currentQuantity := min[uint16](quantity, m.maxQuantity)
 		data, err := conn.ReadHoldingRegisters(address, currentQuantity)
 		if err != nil {
 			return nil, err
@@ -325,7 +369,7 @@ func cal(before, c float64) float64 {
 
 // SetValue set value to modbus from values.
 func (m *Modbus) SetValue(ctx context.Context, point string, value any) error {
-	fieldDetail, ok := m.Points[point]
+	fieldDetail, ok := m.points[point]
 	if !ok {
 		return fmt.Errorf("point for %s not found", point)
 	}
@@ -359,7 +403,7 @@ func (m *Modbus) SetValue(ctx context.Context, point string, value any) error {
 
 // SetValues: Set values to modbus from v.
 /*
-	Fields need to be set should have tag "point"
+	Fields need to be set should have tag "morm"
 */
 func (m *Modbus) SetValues(ctx context.Context, v any) error {
 	addrValue, err := m.gatherAddrValue(ctx, v)
@@ -423,7 +467,7 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error
 		if !exist {
 			continue
 		}
-		fieldDetail, ok := m.Points[fieldName]
+		fieldDetail, ok := m.points[fieldName]
 		if !ok {
 			continue
 		}

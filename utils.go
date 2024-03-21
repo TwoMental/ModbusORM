@@ -37,9 +37,9 @@ func binaryUint32(data []byte, order OrderType) uint32 {
 	return binary.BigEndian.Uint32(data)
 }
 
-// getPointTag get point tag
+// getPointTag get morm tag
 func getPointTag(field reflect.StructField) (bool, string) {
-	name := field.Tag.Get("point")
+	name := field.Tag.Get("morm")
 	if name == "-" || name == "" {
 		return false, ""
 	}
