@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"time"
 
 	"github.com/goburrow/modbus"
@@ -31,23 +32,35 @@ type Modbus struct {
 	points      Point
 	maxQuantity uint16
 
+	withBlock     bool
+	maxBlockSize  uint16
+	maxGapInBlock uint16
+
 	connPool ConnPool
 }
 
-func NewModbusTCP(host string, port int, point Point, opts ...ModbusOption) *Modbus {
-	m := &Modbus{
-		connType: ConnTypeTCP,
-		slaveID:  1,
-		modbusTCP: modbusTCP{
-			Host:            host,
-			Port:            port,
-			MaxOpenConns:    3,
-			ConnMaxLifetime: 30 * time.Minute,
-		},
-		points:      point,
-		maxQuantity: 125,
-		timeout:     10 * time.Second,
+func newDefaultModbus() *Modbus {
+	return &Modbus{
+		slaveID:       1,
+		maxQuantity:   125,
+		timeout:       10 * time.Second,
+		withBlock:     false,
+		maxBlockSize:  100,
+		maxGapInBlock: 10,
 	}
+}
+
+func NewModbusTCP(host string, port int, point Point, opts ...ModbusOption) *Modbus {
+	m := newDefaultModbus()
+	m.connType = ConnTypeTCP
+	m.modbusTCP = modbusTCP{
+		Host:            host,
+		Port:            port,
+		MaxOpenConns:    3,
+		ConnMaxLifetime: 30 * time.Minute,
+	}
+	m.points = point
+
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -55,20 +68,17 @@ func NewModbusTCP(host string, port int, point Point, opts ...ModbusOption) *Mod
 }
 
 func NewModbusRTU(comAddr string, point Point, opts ...ModbusOption) *Modbus {
-	m := &Modbus{
-		connType: ConnTypeRTU,
-		slaveID:  1,
-		modbusRTU: modbusRTU{
-			ComAddr:  comAddr,
-			BaudRate: 9600,
-			DataBits: 8,
-			Parity:   "N",
-			StopBits: 1,
-		},
-		points:      point,
-		maxQuantity: 125,
-		timeout:     10 * time.Second,
+	m := newDefaultModbus()
+	m.connType = ConnTypeRTU
+	m.modbusRTU = modbusRTU{
+		ComAddr:  comAddr,
+		BaudRate: 9600,
+		DataBits: 8,
+		Parity:   "N",
+		StopBits: 1,
 	}
+	m.points = point
+
 	for _, opt := range opts {
 		opt(m)
 	}
@@ -152,12 +162,13 @@ func (m *Modbus) GetValue(ctx context.Context, point string, v any) error {
 		return fmt.Errorf("ReadHoldingRegisters for %s failed, %w", point, err)
 	}
 
-	var parseErr error
 	dataFloat64Before, err := parseDataToFloat64(data, fieldDetail.DataType, fieldDetail.OrderType)
 	if err != nil {
 		return err
 	}
 	dataFloat64 := cal(dataFloat64Before, fieldDetail.GetCoefficient()) + fieldDetail.Offset
+
+	var parseErr error
 	switch v := v.(type) {
 	case *float32:
 		*v = float32(dataFloat64)
@@ -210,8 +221,268 @@ func (m *Modbus) GetValue(ctx context.Context, point string, v any) error {
 /*
 	Fields need to be set should have tag "morm"
 	v should be a struct pointer
-*/
-func (m *Modbus) GetValues(ctx context.Context, v any, filter ...string) error {
+*/func (m *Modbus) GetValues(ctx context.Context, v any, filter ...string) error {
+	if m.withBlock {
+		return m.GetValuesBlock(ctx, v, filter...)
+	}
+	return m.GetValuesSingle(ctx, v, filter...)
+}
+
+type block struct {
+	start   uint16
+	end     uint16
+	vaulues []byte
+}
+
+type blocks map[uint16]*block
+
+func (m *Modbus) GetValuesBlock(ctx context.Context, v any, filter ...string) error {
+	// Get the address blocks
+	addrMap := make(map[uint16]struct{})
+	filterMap := parseFilter(filter)
+	m.collectAddresses(ctx, v, addrMap, filterMap)
+	if len(addrMap) == 0 {
+		return fmt.Errorf("no address found")
+	}
+
+	// Convert the map to block list
+	bs := m.addrMapToBlocks(ctx, addrMap)
+
+	// Read the blocks
+	err := m.readBlocks(ctx, bs)
+	if err != nil {
+		return err
+	}
+
+	// Set the values
+	return m.setAddressValues(ctx, v, bs, filterMap)
+}
+
+func (m *Modbus) addrMapToBlocks(_ context.Context, addrMap map[uint16]struct{}) blocks {
+	// Convert the map to a slice of addresses
+	addrs := make([]uint16, 0, len(addrMap))
+	for addr := range addrMap {
+		addrs = append(addrs, addr)
+	}
+
+	// Sort the addresses
+	sort.Slice(addrs, func(i, j int) bool { return addrs[i] < addrs[j] })
+
+	// Group continuous addresses into blocks, merge blocks with small gaps
+	bs := make(blocks)
+	start := addrs[0]
+	end := addrs[0]
+	for i := 1; i < len(addrs); i++ {
+		if addrs[i] == end+1 {
+			end = addrs[i]
+		} else if addrs[i]-end <= m.maxGapInBlock && end-start+1+addrs[i]-end <= m.maxBlockSize {
+			end = addrs[i]
+		} else {
+			bs[start] = &block{start: start, end: end}
+			start = addrs[i]
+			end = addrs[i]
+		}
+	}
+	bs[start] = &block{start: start, end: end}
+
+	return bs
+}
+
+func (m *Modbus) collectAddresses(ctx context.Context, v any, addrMap map[uint16]struct{}, filterMap map[string]bool) error {
+	// validate v
+	val := reflect.ValueOf(v)
+	if val.Kind() != reflect.Ptr {
+		return fmt.Errorf("not support for %s", val.Kind().String())
+	}
+
+	valueElem := val.Elem()
+	typeElem := reflect.TypeOf(v).Elem()
+
+	if valueElem.Kind() != reflect.Struct {
+		return fmt.Errorf("not support for %s pointer", valueElem.Kind().String())
+	}
+
+	// filter
+	needFilter := len(filterMap) != 0
+
+	for i := 0; i < valueElem.NumField(); i++ {
+		value := valueElem.Field(i)
+		if value.Kind() == reflect.Struct {
+			// dive
+			if !value.CanAddr() {
+				continue
+			}
+			addr := value.Addr()
+			if !addr.IsValid() || !addr.CanInterface() {
+				continue
+			}
+			if e := m.collectAddresses(ctx, addr.Interface(), addrMap, filterMap); e != nil {
+				return e
+			}
+			continue
+		}
+		exist, fieldName := getPointTag(typeElem.Field(i))
+		if !exist {
+			continue
+		}
+		if needFilter && !filterMap[fieldName] {
+			continue
+		}
+		fieldDetail, ok := m.points[fieldName]
+		if !ok {
+			continue
+		}
+		var quantity uint16 = 1
+		if fieldDetail.Quantity != 0 {
+			quantity = fieldDetail.Quantity
+		}
+		var j uint16 = 0
+		for ; j < quantity; j++ {
+			addrMap[fieldDetail.Addr+j] = struct{}{}
+		}
+
+	}
+	return nil
+}
+
+func (m *Modbus) readBlocks(_ context.Context, bs blocks) error {
+	// Get a connection
+	conn, err := m.connPool.Get()
+	if err != nil {
+		return fmt.Errorf("conn slave failed: %w", err)
+	}
+	defer m.connPool.Put(conn)
+	// Read each block
+	for _, b := range bs {
+		data, err := m.readHoldingRegisters(conn, uint16(b.start), uint16(b.end-b.start+1))
+		if err != nil {
+			return err
+		}
+		if len(data) != int(b.end-b.start+1)*2 {
+			return fmt.Errorf("read block failed, want %d, got %d", (b.end-b.start+1)*2, len(data))
+		}
+		b.vaulues = data
+		// Avoid make server too busy
+		time.Sleep(1 * time.Millisecond)
+	}
+	return nil
+}
+
+func (m *Modbus) setAddressValues(ctx context.Context, v any, values blocks, filterMap map[string]bool) error {
+	needFilter := len(filterMap) != 0
+	valueElem := reflect.ValueOf(v).Elem()
+	typeElem := reflect.TypeOf(v).Elem()
+
+	for i := 0; i < valueElem.NumField(); i++ {
+		value := valueElem.Field(i)
+		if value.Kind() == reflect.Struct {
+			// dive
+			if !value.CanAddr() {
+				continue
+			}
+			addr := value.Addr()
+			if !addr.IsValid() || !addr.CanInterface() {
+				continue
+			}
+			if e := m.setAddressValues(ctx, addr.Interface(), values, filterMap); e != nil {
+				return e
+			}
+			continue
+		}
+		exist, fieldName := getPointTag(typeElem.Field(i))
+		if !exist {
+			continue
+		}
+		if needFilter && !filterMap[fieldName] {
+			continue
+		}
+		fieldDetail, ok := m.points[fieldName]
+		if !ok {
+			continue
+		}
+		var quantity uint16 = 1
+		if fieldDetail.Quantity != 0 {
+			quantity = fieldDetail.Quantity
+		}
+		// find data
+		data := m.getFieldData([]byte{}, values, fieldDetail.Addr, quantity)
+
+		// set value
+		dataFloat64Before, err := parseDataToFloat64(data, fieldDetail.DataType, fieldDetail.OrderType)
+		if err != nil {
+			return err
+		}
+		dataFloat64 := cal(dataFloat64Before, fieldDetail.GetCoefficient()) + fieldDetail.Offset
+
+		switch value.Type().Kind() {
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			value.SetInt(int64(dataFloat64))
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			value.SetUint(uint64(dataFloat64))
+		case reflect.Float32, reflect.Float64:
+			value.SetFloat(dataFloat64)
+		case reflect.String:
+			value.SetString(byte2String(data))
+		case reflect.Pointer:
+			ptrType := value.Type().Elem()
+			newValue := reflect.New(ptrType)
+			switch ptrType.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				newValue.Elem().SetInt(int64(dataFloat64))
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				newValue.Elem().SetUint(uint64(dataFloat64))
+			case reflect.Float32, reflect.Float64:
+				newValue.Elem().SetFloat(dataFloat64)
+			case reflect.String:
+				newValue.SetString(byte2String(data))
+			default:
+				return fmt.Errorf("parse for %s pointer not supported", value.Type().Kind())
+			}
+			value.Set(newValue)
+		case reflect.Slice, reflect.Array:
+			newSlice := reflect.MakeSlice(value.Type(), 0, 0)
+
+			if value.Type().Name() == "OriginByte" {
+				for _, b := range data {
+					newSlice = reflect.Append(newSlice, reflect.ValueOf(b))
+				}
+			} else {
+				size := 2
+				if fieldDetail.DataType == PointDataTypeU32 || fieldDetail.DataType == PointDataTypeS32 {
+					size = 4
+				}
+				for i := 0; i+size < len(data); i += size {
+					dataFloat64Before, err := parseDataToFloat64(data[i:i+size], fieldDetail.DataType, fieldDetail.OrderType)
+					if err != nil {
+						return err
+					}
+					newSlice = reflect.Append(newSlice, reflect.ValueOf(cal(dataFloat64Before, fieldDetail.GetCoefficient())+fieldDetail.Offset))
+				}
+			}
+			value.Set(newSlice)
+		default:
+			return fmt.Errorf("parse for %s not supported", value.Type().Kind())
+		}
+	}
+	return nil
+}
+
+func (m *Modbus) getFieldData(data []byte, values blocks, addr uint16, quantity uint16) []byte {
+	for start, block := range values {
+		if start <= addr && addr <= block.end {
+			if addr+quantity <= block.end {
+				data = append(data, block.vaulues[(addr-start)*2:(addr-start)*2+quantity*2]...)
+				return data
+			} else {
+				data = append(data, block.vaulues[addr-start:]...)
+				return m.getFieldData(data, values, block.end+1, quantity)
+			}
+		}
+	}
+	return data
+}
+
+func (m *Modbus) GetValuesSingle(ctx context.Context, v any, filter ...string) error {
 	// validate v
 	val := reflect.ValueOf(v)
 	if val.Kind() != reflect.Ptr {
@@ -335,7 +606,7 @@ func (m *Modbus) readHoldingRegisters(conn Client, address uint16, quantity uint
 		return conn.ReadHoldingRegisters(address, quantity)
 	}
 	for quantity > 0 {
-		currentQuantity := min[uint16](quantity, m.maxQuantity)
+		currentQuantity := min(quantity, m.maxQuantity)
 		data, err := conn.ReadHoldingRegisters(address, currentQuantity)
 		if err != nil {
 			return nil, err

@@ -9,7 +9,9 @@ import (
 )
 
 func main() {
-	conn := modbusorm.NewModbusTCP("localhost", 1502, point())
+	conn := modbusorm.NewModbusTCP("localhost", 1502, point(),
+		modbusorm.WithBlock(false),
+	)
 	if e := conn.Conn(); e != nil {
 		log.Fatalf("Error: %s", e)
 	}
@@ -35,11 +37,24 @@ func point() modbusorm.Point {
 			Offset:      -10,
 			DataType:    modbusorm.PointDataTypeU16,
 		},
+		"star": modbusorm.PointDetails{
+			Addr:        600,
+			Quantity:    300,
+			Coefficient: 0.1,
+			DataType:    modbusorm.PointDataTypeU16,
+		},
+		"origin": modbusorm.PointDetails{
+			Addr:     302,
+			Quantity: 2,
+			DataType: modbusorm.PointDataTypeU32,
+		},
 	}
 }
 
 type Data struct {
-	Voltage     *float64 `morm:"voltage"`
-	Temperature float64  `morm:"temperature"`
-	Unknown     *float64 `morm:"unkonwn"`
+	Voltage     *float64             `morm:"voltage"`
+	Temperature float64              `morm:"temperature"`
+	Star        []float64            `morm:"star"`
+	Origin      modbusorm.OriginByte `morm:"origin"`
+	Unknown     *float64             `morm:"unkonwn"`
 }

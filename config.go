@@ -104,3 +104,24 @@ func WithMaxQuantity(maxQuantity uint16) ModbusOption {
 		d.maxQuantity = maxQuantity
 	}
 }
+
+// WithBlock Set the read by block or not
+func WithBlock(block bool) ModbusOption {
+	return func(d *Modbus) {
+		d.withBlock = block
+	}
+}
+
+// WithMaxBlockSize Set the max block size of the modbus
+func WithMaxBlockSize(maxBlockSize uint16) ModbusOption {
+	return func(d *Modbus) {
+		d.maxBlockSize = maxBlockSize
+	}
+}
+
+// WithMaxGapInBlock Set the max gap in block of the modbus
+func WithMaxGapInBlock(maxGapInBlock uint16) ModbusOption {
+	return func(d *Modbus) {
+		d.maxGapInBlock = maxGapInBlock
+	}
+}

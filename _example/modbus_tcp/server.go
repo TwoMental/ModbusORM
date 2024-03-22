@@ -29,31 +29,9 @@ func run() error {
 	staLsb := uint16(startTime & 0xffff)
 	log.Printf("msb:%d lsb:%d", staMsb, staLsb)
 
-	serv.HoldingRegisters[100] = 0xff00 // 65280
-	serv.HoldingRegisters[101] = 0xffff // 65535 or -1
-	serv.HoldingRegisters[102] = 0x0000 // 0
-	serv.HoldingRegisters[200] = 0x0000 // "artificially generates error" 201-208,210-211
-	serv.HoldingRegisters[300] = 0x0000 // uptime msb
-	serv.HoldingRegisters[301] = 0x0000 // uptime lsb
-	serv.HoldingRegisters[302] = staMsb // application start time msb
-	serv.HoldingRegisters[303] = staLsb // application start time lsb
-	serv.HoldingRegisters[400] = 0x0000 // unixtime msb
-	serv.HoldingRegisters[401] = 0x0000 // unixtime lsb
-	serv.HoldingRegisters[500] = 0x0000 // math.pi msb
-	serv.HoldingRegisters[501] = 0x0000 // math.pi lsb
-
-	serv.InputRegisters[100] = 0xff00 // 65280
-	serv.InputRegisters[101] = 0xffff // 65535 or -1
-	serv.InputRegisters[102] = 0x0000 // 0
-	serv.InputRegisters[200] = 0x0000 // "artificially generates error" 201-208,210-211
-	serv.InputRegisters[300] = 0x0000 // uptime msb
-	serv.InputRegisters[301] = 0x0000 // uptime lsb
-	serv.InputRegisters[302] = staMsb // application start time msb
-	serv.InputRegisters[303] = staLsb // application start time lsb
-	serv.InputRegisters[400] = 0x0000 // unixtime msb
-	serv.InputRegisters[401] = 0x0000 // unixtime lsb
-	serv.InputRegisters[500] = 0x0000 // math.pi msb
-	serv.InputRegisters[501] = 0x0000 // math.pi lsb
+	for i := 0; i < 2000; i++ {
+		serv.HoldingRegisters[i] = uint16(i)
+	}
 
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
