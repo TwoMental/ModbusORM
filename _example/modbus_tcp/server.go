@@ -33,6 +33,11 @@ func run() error {
 		serv.HoldingRegisters[i] = uint16(i)
 	}
 
+	word := []byte("Hello, World!!")
+	for i := 0; i < len(word)-1; i += 2 {
+		serv.HoldingRegisters[404+i/2] = binary.BigEndian.Uint16(word[i : i+2])
+	}
+
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		var uptime uint32 = 0

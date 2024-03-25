@@ -39,14 +39,19 @@ func point() modbusorm.Point {
 		},
 		"star": modbusorm.PointDetails{
 			Addr:        600,
-			Quantity:    300,
+			Quantity:    3,
 			Coefficient: 0.1,
 			DataType:    modbusorm.PointDataTypeU16,
 		},
 		"origin": modbusorm.PointDetails{
 			Addr:     302,
-			Quantity: 2,
+			Quantity: 25,
 			DataType: modbusorm.PointDataTypeU32,
+		},
+		"word": modbusorm.PointDetails{
+			Addr:     404,
+			Quantity: 7,
+			DataType: modbusorm.PointDataTypeU16,
 		},
 	}
 }
@@ -56,5 +61,6 @@ type Data struct {
 	Temperature float64              `morm:"temperature"`
 	Star        []float64            `morm:"star"`
 	Origin      modbusorm.OriginByte `morm:"origin"`
+	Word        string               `morm:"word"`
 	Unknown     *float64             `morm:"unkonwn"`
 }

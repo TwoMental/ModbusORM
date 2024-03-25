@@ -51,9 +51,6 @@ func byte2String(data []byte) string {
 	if len(data)%2 != 0 {
 		data = append(data, 0x00)
 	}
-	for i := 0; i < len(data); i += 2 {
-		data[i], data[i+1] = data[i+1], data[i]
-	}
 	for i, b := range data {
 		if b == 0x00 {
 			return string(data[:i])
