@@ -106,6 +106,23 @@ func WithMaxQuantity(maxQuantity uint16) ModbusOption {
 }
 
 // WithBlock Set the read by block or not
+/*
+	If the block is true, ModbusORM will read by block,
+	otherwise, ModbusORM will read by single point.
+	This mode is set to reduce the number of requests.
+	But for those devices that do not support block read, please set it to false.
+
+	For example, if you have a struct like this:
+	type Data struct {
+		Voltage     *float64             `morm:"voltage"` 		// address 100
+		Temperature float64              `morm:"temperature"` 	// address 101
+		Star        []float64            `morm:"star"` 			// address 102-104
+	}
+
+	It's much more efficient to read by block (one request versus three requests).
+
+	With `WithMaxBlockSize` and `WithMaxGapInBlock` you can control the size of block and the request number.
+*/
 func WithBlock(block bool) ModbusOption {
 	return func(d *Modbus) {
 		d.withBlock = block

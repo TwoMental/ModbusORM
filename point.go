@@ -28,7 +28,7 @@ type Point map[string]PointDetails
 type PointDetails struct {
 	// address, like 900, represents read/write from 900th register
 	Addr uint16
-	// quantiry, like 2, represents 2 registers
+	// quantity, like 2, represents 2 registers
 	Quantity uint16
 	// coefficient, like 0.1, represents the value should be multiplied by 0.1
 	Coefficient float64
@@ -36,7 +36,7 @@ type PointDetails struct {
 	Offset float64
 	// data type, like U16, represents the data type is unsigned 16 bits
 	DataType PointDataType
-	// order type, like BigEndian, represents the byte order is high byte first
+	// order type, like LittleEndian, represents the byte order is low byte first
 	OrderType OrderType
 }
 
