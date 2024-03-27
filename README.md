@@ -11,21 +11,21 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
     // key is the point name, which will be used in tag (morm)
     point := modbusorm.Point{
 		"voltage": modbusorm.PointDetails{
-            // Address of this point.
-			Addr:        100,
-            // Quantity of this poiont.
-			Quantity:    1,
-            // Coefficient of this point. Default 1.
-            // For example:
-            //      if read 10 from modbus server,
-            //      and coefficient is 0.1,
-            //      then you will get 1 in result.
+			// Address of this point.
+			Addr: 100,
+			// Quantity of this poiont.
+			Quantity: 1,
+			// Coefficient of this point. Default 1.
+			// For example:
+			//      if read 10 from modbus server,
+			//      and coefficient is 0.1,
+			//      then you will get 1 in result.
 			Coefficient: 0.1,
-            // Data type of this point
-            //      U16, S16, U32, S32
-			DataType:    modbusorm.PointDataTypeU16,
+			// Data type of this point
+			//      U16, S16, U32, S32
+			DataType: modbusorm.PointDataTypeU16,
 		},
-    }
+	}
     ```
 - Define a struct with `morm` tag.
     ```go
@@ -41,24 +41,24 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
 - Read/Write with your modbus server.
     ```go
     // new
-    conn := modbusorm.NewModbusTCP(
+	conn := modbusorm.NewModbusTCP(
 		// Host of modbus server.
 		"localhost",
 		// Port of modbus server.
 		1502,
 		// Point define before.
-		point(),
+		point,
 		// Block mode setting. Default false.
 		//  With block mode, ModbusORM will try to read data by block,
 		//  rather than by single point.
-        //  If set to true, two more parameters is avaliable. 
+		//  If set to true, two more parameters is avaliable.
 		modbusorm.WithBlock(true),
-        // Max block size. Default 100.
-        //  Only work with block mode.
-        modbusorm.WithMaxBlockSize(100),
-        // Max gap in block. Default 10.
-        //  Only work with block mode.
-        modbusorm.WithMaxGapInBlock(10),
+		// Max block size. Default 100.
+		//  Only work with block mode.
+		modbusorm.WithMaxBlockSize(100),
+		// Max gap in block. Default 10.
+		//  Only work with block mode.
+		modbusorm.WithMaxGapInBlock(10),
 		// timeout setting.
 		modbusorm.WithTimeout(10*time.Second),
 		// max open connections in connection pool.
@@ -66,17 +66,17 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
 		// max connection lifetime in connection pool.
 		modbusorm.WithConnMaxLifetime(30*time.Minute),
 	)
-    // connect
-    conn.Conn()
-    // read
-    data := &Data{}
-    conn.GetValues(context.Background(), data)
+	// connect
+	conn.Conn()
+	// read
+	data := &Data{}
+	conn.GetValues(context.Background(), data)
     ```
 - See more details in [_example](./_example/)
 
 ## Demo
 - Modbus TCP
-    - go to example folder:  `cd _example`
+    - go to example folder:  `cd _example/modbus_tcp`
     - start a demo server: `go run server.go`
     - start a demo client: `go run client.go`
 
