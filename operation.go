@@ -229,9 +229,9 @@ func (m *Modbus) GetValue(ctx context.Context, point string, v any) error {
 }
 
 type block struct {
-	start   uint16
-	end     uint16
-	vaulues []byte
+	start  uint16
+	end    uint16
+	values []byte
 }
 
 type blocks map[uint16]*block
@@ -361,7 +361,7 @@ func (m *Modbus) readBlocks(_ context.Context, bs blocks) error {
 		if len(data) != int(b.end-b.start+1)*2 {
 			return fmt.Errorf("read block failed, want %d, got %d", (b.end-b.start+1)*2, len(data))
 		}
-		b.vaulues = data
+		b.values = data
 		// Avoid make server too busy
 		time.Sleep(1 * time.Millisecond)
 	}
@@ -470,11 +470,11 @@ func (m *Modbus) setAddressValues(ctx context.Context, v any, values blocks, fil
 func (m *Modbus) getFieldData(data []byte, values blocks, addr uint16, quantity uint16) []byte {
 	for start, block := range values {
 		if start <= addr && addr <= block.end {
-			if addr+quantity <= block.end {
-				data = append(data, block.vaulues[(addr-start)*2:(addr-start)*2+quantity*2]...)
+			if addr+quantity-1 <= block.end {
+				data = append(data, block.values[(addr-start)*2:(addr-start)*2+quantity*2]...)
 				return data
 			} else {
-				data = append(data, block.vaulues[addr-start:]...)
+				data = append(data, block.values[addr-start:]...)
 				return m.getFieldData(data, values, block.end+1, quantity)
 			}
 		}
