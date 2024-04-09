@@ -451,7 +451,7 @@ func (m *Modbus) setAddressValues(ctx context.Context, v any, values blocks, fil
 				if fieldDetail.DataType == PointDataTypeU32 || fieldDetail.DataType == PointDataTypeS32 {
 					size = 4
 				}
-				for i := 0; i+size < len(data); i += size {
+				for i := 0; i+size <= len(data); i += size {
 					dataFloat64Before, err := parseDataToFloat64(data[i:i+size], fieldDetail.DataType, fieldDetail.OrderType)
 					if err != nil {
 						return err
@@ -677,21 +677,21 @@ func (m *Modbus) SetValue(ctx context.Context, point string, value any) error {
 	Fields need to be set should have tag "morm"
 */
 func (m *Modbus) SetValues(ctx context.Context, v any) error {
+	// gather address and value
 	addrValue, err := m.gatherAddrValue(ctx, v)
 	if err != nil {
 		return errors.Wrap(err, "gatherAddrValue failed")
 	}
-	return m.writeValues(ctx, addrValue)
+	// transform to blocks
+	var blockData blocks
+	if m.withBlock {
+		blockData = m.addrValueToBlocks(addrValue)
+	}
+	// write
+	return m.writeValues(ctx, blockData)
 }
 
-type addrValue struct {
-	addr     uint16
-	quantity uint16
-	value    uint16
-	values   []byte
-}
-
-func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error) {
+func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]*block, error) {
 	// real value and type
 	var valueElem reflect.Value = reflect.ValueOf(v)
 	var typeElem reflect.Type
@@ -707,7 +707,7 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error
 	}
 
 	fieldNum := valueElem.NumField()
-	addrValues := make([]addrValue, 0, fieldNum)
+	bs := make([]*block, 0, fieldNum)
 	for i := 0; i < fieldNum; i++ {
 		value := valueElem.Field(i)
 		if value.Kind() == reflect.Struct {
@@ -723,7 +723,7 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error
 			if err != nil {
 				return nil, fmt.Errorf("gatherAddrValue for %s failed: %w", typeElem.Field(i).Name, err)
 			}
-			addrValues = append(addrValues, sub...)
+			bs = append(bs, sub...)
 			continue
 		}
 
@@ -742,7 +742,11 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error
 		if !ok {
 			continue
 		}
-		if fieldDetail.Quantity == 1 {
+		var base uint16 = 1
+		if fieldDetail.DataType == PointDataTypeU32 || fieldDetail.DataType == PointDataTypeS32 {
+			base = 2
+		}
+		if fieldDetail.Quantity == base {
 			var valueFloat float64
 			if value.CanInt() {
 				valueFloat = float64(value.Int())
@@ -753,17 +757,90 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]addrValue, error
 			} else {
 				continue
 			}
-			addrValues = append(addrValues, addrValue{addr: fieldDetail.Addr, quantity: fieldDetail.Quantity, value: uint16((valueFloat - fieldDetail.Offset) / fieldDetail.GetCoefficient())})
-		} else {
-			// TODO: coefficent and offset
-			addrValues = append(addrValues, addrValue{addr: fieldDetail.Addr, quantity: fieldDetail.Quantity, values: []byte(value.String())})
-		}
+			buf := new(bytes.Buffer)
+			err := binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+			if err != nil {
+				return nil, fmt.Errorf("binary.Write failed: %w", err)
+			}
 
+			bs = append(bs, &block{start: fieldDetail.Addr, end: fieldDetail.Addr + fieldDetail.Quantity - 1, values: buf.Bytes()})
+		} else {
+			switch value.Kind() {
+			case reflect.String:
+				bs = append(bs, &block{start: fieldDetail.Addr, end: fieldDetail.Addr + fieldDetail.Quantity - 1, values: []byte(value.String())})
+			case reflect.Array, reflect.Slice:
+				if value.Type().Name() == "OriginByte" {
+					bs = append(bs, &block{start: fieldDetail.Addr, end: fieldDetail.Addr + fieldDetail.Quantity - 1, values: value.Bytes()})
+				} else {
+					buf := new(bytes.Buffer)
+					for j := 0; j < value.Len(); j++ {
+						var valueFloat float64
+						if value.Index(j).CanInt() {
+							valueFloat = float64(value.Index(j).Int())
+						} else if value.Index(j).CanUint() {
+							valueFloat = float64(value.Index(j).Uint())
+						} else if value.Index(j).CanFloat() {
+							valueFloat = value.Index(j).Float()
+						} else {
+							continue
+						}
+						err := binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+						if err != nil {
+							return nil, fmt.Errorf("binary.Write failed: %w", err)
+						}
+					}
+					bs = append(bs, &block{start: fieldDetail.Addr, end: fieldDetail.Addr + fieldDetail.Quantity - 1, values: buf.Bytes()})
+				}
+			}
+		}
 	}
-	return addrValues, nil
+	return bs, nil
 }
 
-func (m *Modbus) writeValues(_ context.Context, addrValues []addrValue) error {
+func (m *Modbus) addrValueToBlocks(rawData []*block) blocks {
+	// Convert the map to a slice of addresses
+	addrs := make([]*block, 0, len(rawData))
+	for _, v := range rawData {
+		if v.start == v.end {
+			addrs = append(addrs, v)
+		} else {
+			for i := 0; i <= int(v.end-v.start); i++ {
+				var data = make([]byte, 2)
+				if (i+1)*2 <= len(v.values) {
+					data = v.values[i*2 : (i+1)*2]
+				} else if i*2+1 == len(v.values) {
+					data[0] = v.values[i*2]
+				}
+				addrs = append(addrs, &block{start: v.start + uint16(i), end: v.start + uint16(i), values: data})
+			}
+		}
+	}
+
+	// Sort the addresses
+	sort.Slice(addrs, func(i, j int) bool { return addrs[i].start < addrs[j].start })
+
+	// Group continuous addresses into blocks, merge blocks with small gaps
+	blocks := make(blocks)
+	start := addrs[0].start
+	end := addrs[0].start
+	values := addrs[0].values
+	for i := 1; i < len(addrs); i++ {
+		if addrs[i].start == end+1 && end-start+1 <= m.maxBlockSize {
+			end = addrs[i].end
+			values = append(values, addrs[i].values...)
+		} else {
+			blocks[start] = &block{start: start, end: end, values: values}
+			start = addrs[i].start
+			end = addrs[i].end
+			values = addrs[i].values
+		}
+	}
+	blocks[start] = &block{start: start, end: end, values: values}
+
+	return blocks
+}
+
+func (m *Modbus) writeValues(_ context.Context, bs blocks) error {
 	// conn
 	conn, err := m.connPool.Get()
 	if err != nil {
@@ -772,15 +849,9 @@ func (m *Modbus) writeValues(_ context.Context, addrValues []addrValue) error {
 	defer m.connPool.Put(conn)
 
 	// set
-	for _, v := range addrValues {
-		if v.quantity <= 1 {
-			if _, err := conn.WriteSingleRegister(v.addr, v.value); err != nil {
-				return errors.Wrap(err, "WriteSingleRegister failed")
-			}
-		} else {
-			if _, err := conn.WriteMultipleRegisters(v.addr, v.quantity, v.values); err != nil {
-				return errors.Wrap(err, "WriteMultipleRegisters failed")
-			}
+	for _, b := range bs {
+		if _, err := conn.WriteMultipleRegisters(b.start, b.end-b.start+1, b.values); err != nil {
+			return errors.Wrap(err, "WriteMultipleRegisters failed")
 		}
 	}
 	return nil
