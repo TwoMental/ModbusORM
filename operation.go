@@ -772,7 +772,12 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]*block, error) {
 				continue
 			}
 			buf := new(bytes.Buffer)
-			err := binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+			var err error
+			if base == 1 {
+				err = binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+			} else {
+				err = binary.Write(buf, binary.BigEndian, uint32((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+			}
 			if err != nil {
 				return nil, fmt.Errorf("binary.Write failed: %w", err)
 			}
