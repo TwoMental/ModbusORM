@@ -451,12 +451,26 @@ func (m *Modbus) setAddressValues(ctx context.Context, v any, values blocks, fil
 				if fieldDetail.DataType == PointDataTypeU32 || fieldDetail.DataType == PointDataTypeS32 {
 					size = 4
 				}
-				for i := 0; i+size <= len(data); i += size {
-					dataFloat64Before, err := parseDataToFloat64(data[i:i+size], fieldDetail.DataType, fieldDetail.OrderType)
-					if err != nil {
-						return err
+				sliceElemType := value.Type().Elem()
+				switch sliceElemType.Kind() {
+				case reflect.Float64:
+					for i := 0; i+size <= len(data); i += size {
+						dataFloat64, err := parseDataToFloat64(data[i:i+size], fieldDetail.DataType, fieldDetail.OrderType)
+						if err != nil {
+							return err
+						}
+						dataFloat64 = cal(dataFloat64, fieldDetail.GetCoefficient()) + fieldDetail.Offset
+						newSlice = reflect.Append(newSlice, reflect.ValueOf(dataFloat64))
 					}
-					newSlice = reflect.Append(newSlice, reflect.ValueOf(cal(dataFloat64Before, fieldDetail.GetCoefficient())+fieldDetail.Offset))
+				default:
+					for i := 0; i+size <= len(data); i += size {
+						dataFloat64, err := parseDataToFloat64(data[i:i+size], fieldDetail.DataType, fieldDetail.OrderType)
+						if err != nil {
+							return err
+						}
+						dataFloat64 = cal(dataFloat64, fieldDetail.GetCoefficient()) + fieldDetail.Offset
+						newSlice = reflect.Append(newSlice, reflect.ValueOf(dataFloat64).Convert(sliceElemType))
+					}
 				}
 			}
 			value.Set(newSlice)
@@ -784,7 +798,13 @@ func (m *Modbus) gatherAddrValue(ctx context.Context, v any) ([]*block, error) {
 						} else {
 							continue
 						}
-						err := binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+						// TODO: missing precision when float to uint16
+						var err error
+						if base == 1 {
+							err = binary.Write(buf, binary.BigEndian, uint16((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+						} else {
+							err = binary.Write(buf, binary.BigEndian, uint32((valueFloat-fieldDetail.Offset)/fieldDetail.GetCoefficient()))
+						}
 						if err != nil {
 							return nil, fmt.Errorf("binary.Write failed: %w", err)
 						}
