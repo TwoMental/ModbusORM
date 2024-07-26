@@ -16,14 +16,18 @@ func NewModbusRTUPool(client Client) (ConnPool, error) {
 	}, nil
 }
 
+// Get returns a connection from the pool
+// Because ModbusRTU is a serial port, so can't create a new connection.
 func (p *ModbusRTUPool) Get() (Client, error) {
 	return p.client, nil
 }
 
+// Put puts a connection back to the pool
 func (p *ModbusRTUPool) Put(conn Client) error {
 	return nil
 }
 
+// Close closes all connections in the pool
 func (p *ModbusRTUPool) Close() error {
 	return p.client.Close()
 }

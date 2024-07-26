@@ -1,9 +1,11 @@
 package modbusorm
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/goburrow/modbus"
@@ -18,7 +20,9 @@ type ModbusTCPPool struct {
 }
 
 type ModbusTCPPoolConfig struct {
-	MaxOpenConns    int
+	// MaxOpenConns is the maximum number of open connections to the server.
+	MaxOpenConns int
+	// ConnMaxLifetime is the maximum time a connection can be used.
 	ConnMaxLifetime time.Duration
 }
 
@@ -44,6 +48,11 @@ func (c *ModbusTCPClient) IsAlive() bool {
 		} else if strings.Contains(err.Error(), "connection refused") {
 			return false
 		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return false
+		} else if errors.Is(err, syscall.EPIPE) {
+			return false
+		} else if strings.Contains(err.Error(), "response transaction id") && strings.Contains(err.Error(), "does not match request") {
+			// if last request time-out, this request's transaction id will be wrong.
 			return false
 		}
 	}

@@ -47,10 +47,17 @@ func getPointTag(field reflect.StructField) (bool, string) {
 }
 
 // byte2String convert byte to string
-func byte2String(data []byte) string {
+func byte2String(data []byte, order OrderType) string {
 	if len(data)%2 != 0 {
 		data = append(data, 0x00)
 	}
+
+	if order == OrderTypeLittleEndian {
+		for i := 0; i < len(data); i += 2 {
+			data[i], data[i+1] = data[i+1], data[i]
+		}
+	}
+
 	for i, b := range data {
 		if b == 0x00 {
 			return string(data[:i])
@@ -58,3 +65,28 @@ func byte2String(data []byte) string {
 	}
 	return string(data)
 }
+
+// string2Byte convert string to byte
+func string2Byte(data string, order OrderType) []byte {
+	result := []byte(data)
+
+	if len(result)%2 != 0 {
+		result = append(result, 0x00)
+	}
+
+	if order == OrderTypeLittleEndian {
+		for i := 0; i < len(data); i += 2 {
+			result[i], result[i+1] = result[i+1], result[i]
+		}
+	}
+
+	return result
+}
+
+type block struct {
+	start  uint16
+	end    uint16
+	values []byte
+}
+
+type blocks map[uint16]*block

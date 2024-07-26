@@ -5,7 +5,7 @@ import "time"
 // modbusTCP Connection config of TCP
 type modbusTCP struct {
 	Host            string
-	Port            int
+	Port            uint
 	MaxOpenConns    int
 	ConnMaxLifetime time.Duration
 }
@@ -29,7 +29,7 @@ func WithHost(host string) ModbusOption {
 }
 
 // WithPort Set the port of the modbus TCP
-func WithPort(port int) ModbusOption {
+func WithPort(port uint) ModbusOption {
 	return func(d *Modbus) {
 		d.Port = port
 	}
@@ -84,7 +84,7 @@ func WithStopBits(stopBits int) ModbusOption {
 	}
 }
 
-// WithTimeout Set the timeout of the modbus
+// WithTimeout Set the connect & read timeout of the modbus
 func WithTimeout(timeout time.Duration) ModbusOption {
 	return func(d *Modbus) {
 		d.timeout = timeout

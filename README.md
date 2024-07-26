@@ -24,6 +24,9 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
 			// Data type of this point
 			//      U16, S16, U32, S32
 			DataType: modbusorm.PointDataTypeU16,
+			// RegisterType of this point
+			//		Coil, Discrete Input, Input Register, Holding Register
+			RegisterType: modbusorm.RegisterTypeHoldingRegister,
 		},
 	}
     ```
@@ -60,7 +63,7 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
 		//  Only work with block mode.
 		modbusorm.WithMaxGapInBlock(10),
 		// timeout setting.
-		modbusorm.WithTimeout(10*time.Second),
+		modbusorm.WithTimeout(1*time.Second),
 		// max open connections in connection pool.
 		modbusorm.WithMaxOpenConns(3),
 		// max connection lifetime in connection pool.
@@ -81,8 +84,8 @@ ModbusORM is a golang package allows you to read/write Modbus data by struct wit
     - start a demo client: `go run client.go`
 
 # TODOs
-- [ ] README
-- [x] Modbus RTU 
+- [ ] Support different slave id on the same serial port
 - [ ] Example
-- [ ] More data type
 - [ ] Logger
+- [x] Modbus RTU 
+- [x] More data type

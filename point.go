@@ -3,24 +3,7 @@ package modbusorm
 // OriginByte the origin byte
 type OriginByte []byte
 
-// PointDataType point data type
-type PointDataType uint8
-
-const (
-	PointDataTypeU16 PointDataType = iota
-	PointDataTypeS16
-	PointDataTypeU32
-	PointDataTypeS32
-)
-
-// OrderType order type
-type OrderType uint8
-
-const (
-	OrderTypeDefault      OrderType = iota // default
-	OrderTypeBigEndian                     // high byte first
-	OrderTypeLittleEndian                  // low byte first
-)
+const OriginByteName = "OriginByte"
 
 // Point point table
 type Point map[string]PointDetails
@@ -38,12 +21,22 @@ type PointDetails struct {
 	DataType PointDataType
 	// order type, like LittleEndian, represents the byte order is low byte first
 	OrderType OrderType
+	// register type, default is HoldRegister
+	RegisterType RegisterType
 }
 
-// GetCoefficient get coefficient, if coefficient not set, return 1
-func (p *PointDetails) GetCoefficient() float64 {
+// getCoefficient get coefficient, if coefficient not set, return 1
+func (p *PointDetails) getCoefficient() float64 {
 	if p.Coefficient == 0 {
 		return 1
 	}
 	return p.Coefficient
+}
+
+// getQuantity get quantity, if quantity not set, return 1
+func (p *PointDetails) getQuantity() uint16 {
+	if p.Quantity == 0 {
+		return 1
+	}
+	return p.Quantity
 }
